@@ -144,6 +144,14 @@ const emptyEnhancement: RequirementEnhancement = {
   clarifyingQuestions: []
 };
 
+const llmModelsByProvider: Record<string, string[]> = {
+  OpenAI: ['gpt-4o', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4o-mini'],
+  Anthropic: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest'],
+  Gemini: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash-exp']
+};
+
+const getProviderModels = (provider: string): string[] => llmModelsByProvider[provider] ?? [];
+
 function App(): JSX.Element {
   const [status, setStatus] = useState('Waiting for extension host...');
   const [feedback, setFeedback] = useState('');
@@ -171,6 +179,7 @@ function App(): JSX.Element {
   const [xrayPushedIssues, setXrayPushedIssues] = useState<XrayPushedIssue[]>([]);
   const [xrayPushPreview, setXrayPushPreview] = useState<XrayPushPreview | null>(null);
   const [xrayPushProgress, setXrayPushProgress] = useState<XrayPushProgress | null>(null);
+  const availableModels = useMemo(() => getProviderModels(settings.llmProvider), [settings.llmProvider]);
 
   useEffect(() => {
     const handler = (
@@ -181,9 +190,14 @@ function App(): JSX.Element {
       if (event.data.command === 'pong') {
         setStatus(event.data.text ?? 'Connected');
       } else if (event.data.command === 'settings:loaded') {
+        const provider = payload.llmProvider ?? defaultSettings.llmProvider;
+        const providerModels = getProviderModels(provider);
+        const loadedModel = payload.llmModel ?? '';
+        const nextModel = loadedModel || providerModels[0] || '';
+
         setSettings({
-          llmProvider: payload.llmProvider ?? defaultSettings.llmProvider,
-          llmModel: payload.llmModel ?? '',
+          llmProvider: provider,
+          llmModel: nextModel,
           llmApiKey: payload.llmApiKey ?? '',
           jiraUrl: payload.jiraUrl ?? '',
           jiraProjectKey: payload.jiraProjectKey ?? '',
@@ -296,7 +310,26 @@ function App(): JSX.Element {
     };
   }, []);
 
+  useEffect(() => {
+    if (!availableModels.length) {
+      return;
+    }
+    if (!availableModels.includes(settings.llmModel)) {
+      setSettings((prev) => ({ ...prev, llmModel: availableModels[0] }));
+    }
+  }, [availableModels, settings.llmModel]);
+
   const updateSettingsField = (key: keyof Settings, value: string): void => {
+    if (key === 'llmProvider') {
+      const providerModels = getProviderModels(value);
+      setSettings((prev) => ({
+        ...prev,
+        llmProvider: value,
+        llmModel: providerModels.includes(prev.llmModel) ? prev.llmModel : providerModels[0] ?? ''
+      }));
+      return;
+    }
+
     setSettings((prev) => ({ ...prev, [key]: value }));
   };
 
@@ -653,7 +686,7 @@ function App(): JSX.Element {
           <h2>Settings</h2>
 
           <div className="field-row"><label htmlFor="llmProvider">LLM Provider <Tip text="Provider used for requirement enhancement and generation." /></label><select id="llmProvider" value={settings.llmProvider} onChange={(e) => updateSettingsField('llmProvider', e.target.value)}><option value="OpenAI">OpenAI</option><option value="Anthropic">Anthropic</option><option value="Gemini">Gemini</option></select></div>
-          <div className="field-row"><label htmlFor="llmModel">Model</label><input id="llmModel" type="text" placeholder="gpt-4o" value={settings.llmModel} onChange={(e) => updateSettingsField('llmModel', e.target.value)} /></div>
+          <div className="field-row"><label htmlFor="llmModel">Model</label><select id="llmModel" value={settings.llmModel} onChange={(e) => updateSettingsField('llmModel', e.target.value)}>{availableModels.map((model) => <option key={model} value={model}>{model}</option>)}</select></div>
           <div className="field-row"><label htmlFor="llmApiKey">LLM API Key</label><input id="llmApiKey" type="password" value={settings.llmApiKey} onChange={(e) => updateSettingsField('llmApiKey', e.target.value)} /></div>
           <div className="field-row"><label htmlFor="jiraUrl">Jira URL</label><input id="jiraUrl" type="text" placeholder="https://your-domain.atlassian.net" value={settings.jiraUrl} onChange={(e) => updateSettingsField('jiraUrl', e.target.value)} /></div>
           <div className="field-row"><label htmlFor="jiraProjectKey">Jira Project Key</label><input id="jiraProjectKey" type="text" placeholder="PROJ" value={settings.jiraProjectKey} onChange={(e) => updateSettingsField('jiraProjectKey', e.target.value)} /></div>
