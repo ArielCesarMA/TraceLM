@@ -70,6 +70,7 @@ type TestCaseItem = {
   preconditions: string[];
   steps: string[];
   expectedResult: string;
+  testData: string;
   layer: 'Unit' | 'API' | 'UI';
   priority: string;
 };
@@ -147,7 +148,14 @@ const emptyEnhancement: RequirementEnhancement = {
 const llmModelsByProvider: Record<string, string[]> = {
   OpenAI: ['gpt-4o', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4o-mini'],
   Anthropic: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest'],
-  Gemini: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash-exp']
+  Gemini: [
+    'gemini-2.5-flash',
+    'gemini-2.5-pro',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-001',
+    'gemini-2.0-flash-lite',
+    'gemini-2.0-flash-lite-001'
+  ]
 };
 
 const getProviderModels = (provider: string): string[] => llmModelsByProvider[provider] ?? [];
@@ -179,6 +187,7 @@ function App(): JSX.Element {
   const [xrayPushedIssues, setXrayPushedIssues] = useState<XrayPushedIssue[]>([]);
   const [xrayPushPreview, setXrayPushPreview] = useState<XrayPushPreview | null>(null);
   const [xrayPushProgress, setXrayPushProgress] = useState<XrayPushProgress | null>(null);
+  const [generationProgress, setGenerationProgress] = useState<string>('');
   const availableModels = useMemo(() => getProviderModels(settings.llmProvider), [settings.llmProvider]);
 
   useEffect(() => {
@@ -438,6 +447,67 @@ function App(): JSX.Element {
     });
   };
 
+  const generateAll = (): void => {
+    if (!requirementText.trim()) {
+      setFeedback('Add requirements text before generation.');
+      return;
+    }
+    if (!ensureReviewed()) {
+      return;
+    }
+
+    setGenerationProgress('Starting enhancement...');
+    setFeedback('Generating all artifacts sequentially...');
+
+    let currentStep = 0;
+    const steps = [
+      {
+        name: 'Requirement Enhancement',
+        command: 'requirements:enhance',
+        payload: { requirements: requirementText }
+      },
+      {
+        name: 'Test Scenarios',
+        command: 'scenarios:generate',
+        payload: { requirements: requirementText, enhancement: JSON.stringify(enhancement) }
+      },
+      {
+        name: 'Test Cases',
+        command: 'testCases:generate',
+        payload: { scenarios: JSON.stringify(scenarios) }
+      },
+      {
+        name: 'Automation Analysis',
+        command: 'automation:analyze',
+        payload: {
+          requirements: requirementText,
+          enhancement: JSON.stringify(enhancement),
+          scenarios: JSON.stringify(scenarios),
+          testCases: JSON.stringify(testCases)
+        }
+      }
+    ];
+
+    const executeStep = (): void => {
+      if (currentStep >= steps.length) {
+        setGenerationProgress('');
+        setFeedback('All artifacts generated successfully!');
+        return;
+      }
+
+      const step = steps[currentStep];
+      setGenerationProgress(`${step.name} (${currentStep + 1}/${steps.length})...`);
+      currentStep += 1;
+
+      window.__TRACELM_VSCODE__?.postMessage({
+        command: step.command,
+        payload: step.payload
+      });
+    };
+
+    executeStep();
+  };
+
   const generateScenarios = (): void => {
     if (!requirementText.trim()) {
       setFeedback('Add requirements text before scenario generation.');
@@ -589,7 +659,8 @@ function App(): JSX.Element {
       item.priority,
       item.preconditions.join(' | '),
       item.steps.join(' | '),
-      item.expectedResult
+      item.expectedResult,
+      item.testData
     ]);
     const headerWithTrace = [
       'ID',
@@ -599,8 +670,9 @@ function App(): JSX.Element {
       'Layer',
       'Priority',
       'Preconditions',
-      'Steps',
-      'ExpectedResult'
+      'Detailed Steps',
+      'ExpectedResult',
+      'Test Data'
     ];
     const csv = [headerWithTrace, ...lines]
       .map((row) => row.map((cell) => escapeCsvCell(cell)).join(','))
@@ -788,6 +860,10 @@ function App(): JSX.Element {
         <section className="panel">
           <h2>Test Cases</h2>
           <p className="helper-text">Generate test cases from scenarios with Gherkin and structured table output.</p>
+          <div className="button-row">
+            <button type="button" onClick={generateAll} disabled={generationProgress.length > 0}>Generate All Artifacts</button>
+            {generationProgress && <span className="progress-message">{generationProgress}</span>}
+          </div>
           <div className="button-row">
             <button type="button" onClick={generateTestCases}>Generate Test Cases</button>
             <button type="button" onClick={exportTestCasesGherkin} disabled={!testCases.length}>Export .feature</button>

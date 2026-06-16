@@ -59,6 +59,7 @@ type TestCaseItem = {
   preconditions: string[];
   steps: string[];
   expectedResult: string;
+  testData: string;
   layer: 'Unit' | 'API' | 'UI';
   priority: string;
 };
@@ -160,15 +161,13 @@ export class TraceLMPanel {
 
         if (message.command === 'settings:testLlm') {
           const payload = this.normalizePayload(message.payload);
-          const ok = Boolean(payload.llmApiKey.trim()) && Boolean(payload.llmModel.trim());
+          const result = await this.testLlmConnection(payload);
           this.panel.webview.postMessage({
             command: 'settings:testResult',
             payload: {
               target: 'llm',
-              ok: ok ? 'true' : 'false',
-              message: ok
-                ? 'LLM configuration looks valid. API call integration comes in Phase 3.'
-                : 'LLM API key and model are required.'
+              ok: result.ok ? 'true' : 'false',
+              message: result.message
             }
           });
           return;
@@ -761,6 +760,66 @@ export class TraceLMPanel {
     );
   }
 
+  private async testLlmConnection(
+    settings: SettingsPayload
+  ): Promise<{ ok: boolean; message: string }> {
+    const provider = settings.llmProvider.trim();
+    const model = settings.llmModel.trim();
+    const apiKey = settings.llmApiKey.trim();
+
+    if (!provider) {
+      return { ok: false, message: 'LLM provider is required.' };
+    }
+
+    if (!model) {
+      return { ok: false, message: 'LLM model is required.' };
+    }
+
+    if (!apiKey) {
+      return { ok: false, message: 'LLM API key is required.' };
+    }
+
+    try {
+      const llm = new LLMService(provider as LLMProviderName, apiKey);
+
+      const timeoutMs = 15000;
+      const timeoutError = new Error(
+        `Timed out after ${timeoutMs / 1000}s while contacting ${provider}.`
+      );
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        const timer = setTimeout(() => reject(timeoutError), timeoutMs);
+        void timer;
+      });
+
+      const completionPromise = llm.complete({
+        model,
+        temperature: 0,
+        prompt: 'Reply with OK only.'
+      });
+
+      const response = await Promise.race([completionPromise, timeoutPromise]);
+      const hasText = Boolean(response.text?.trim());
+
+      if (!hasText) {
+        return {
+          ok: false,
+          message: `LLM test failed: ${provider} responded but returned empty output for model ${model}.`
+        };
+      }
+
+      return {
+        ok: true,
+        message: `LLM test succeeded for ${provider} (${model}).`
+      };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Unknown LLM error.';
+      return {
+        ok: false,
+        message: `LLM test failed for ${provider} (${model}): ${reason}`
+      };
+    }
+  }
+
   private toXrayPushStatuses(
     statuses: XrayPushItemStatus[],
     jiraUrl: string
@@ -957,6 +1016,7 @@ export class TraceLMPanel {
         preconditions: scenario.preconditions,
         steps: scenario.flow,
         expectedResult: scenario.expectedOutcome,
+        testData: 'Sample data or mock values needed for execution.',
         layer: index % 3 === 0 ? 'API' : index % 3 === 1 ? 'UI' : 'Unit',
         priority: scenario.priority || 'Medium'
       };
@@ -1080,6 +1140,7 @@ export class TraceLMPanel {
           preconditions: this.asStringArray(item.preconditions),
           steps: this.asStringArray(item.steps),
           expectedResult: this.asString(item.expectedResult),
+          testData: this.asString(item.testData),
           layer,
           priority: this.asString(item.priority) || 'Medium'
         };
@@ -1087,7 +1148,8 @@ export class TraceLMPanel {
       .filter((item) => item.title.length > 0)
       .map((item) => ({
         ...item,
-        requirementRefs: item.requirementRefs.length > 0 ? item.requirementRefs : [item.scenarioId]
+        requirementRefs: item.requirementRefs.length > 0 ? item.requirementRefs : [item.scenarioId],
+        testData: item.testData || 'Sample data or mock values needed for execution.'
       }));
   }
 
