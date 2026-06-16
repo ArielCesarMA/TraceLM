@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+webview-ui/node_modules/
+
+# Build output
+dist/
+webview-ui/dist/
+
+# Test output
+coverage/
+
+# Package artifacts
+*.vsix
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# VS Code workspace noise
+.vscode/*.log

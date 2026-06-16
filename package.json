@@ -1,0 +1,101 @@
+{
+  "name": "tracelm",
+  "displayName": "TraceLM",
+  "description": "AI-assisted requirement tracing, test generation, and Jira/Xray push workflow",
+  "version": "0.0.1",
+  "publisher": "local",
+  "repository": {
+    "type": "git",
+    "url": "file:///C:/Users/Ariel%20Cesar%20Abaoag/Documents/PROJECT7/TraceLM/.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "tracelm.open",
+        "title": "TraceLM: Open"
+      }
+    ],
+    "configuration": {
+      "title": "TraceLM",
+      "properties": {
+        "tracelm.llmProvider": {
+          "type": "string",
+          "default": "OpenAI",
+          "description": "Selected LLM provider for TraceLM."
+        },
+        "tracelm.llmModel": {
+          "type": "string",
+          "default": "",
+          "description": "LLM model name used for generation."
+        },
+        "tracelm.jiraUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Jira Cloud base URL (for example https://your-domain.atlassian.net)."
+        },
+        "tracelm.jiraProjectKey": {
+          "type": "string",
+          "default": "",
+          "description": "Default Jira project key for TraceLM operations."
+        },
+        "tracelm.jiraEmail": {
+          "type": "string",
+          "default": "",
+          "description": "Jira account email used for Jira Cloud API authentication."
+        },
+        "tracelm.xrayBatchSize": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Number of test cases to push per Xray batch."
+        },
+        "tracelm.xrayBatchDelayMs": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 0,
+          "maximum": 30000,
+          "description": "Delay in milliseconds between Xray push batches."
+        },
+        "tracelm.xrayMaxRetries": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Maximum retries for rate-limited Xray batch requests."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build:webview": "npm --prefix webview-ui run build",
+    "build:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --outfile=dist/extension.js --external:vscode",
+    "build": "npm run build:webview && npm run build:extension",
+    "watch:webview": "npm --prefix webview-ui run dev",
+    "watch:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --outfile=dist/extension.js --external:vscode --watch",
+    "watch": "npm run watch:extension",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "package:vsix": "npx @vscode/vsce package"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.14.2",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.23.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.5.2"
+  },
+  "dependencies": {
+    "mammoth": "^1.8.0",
+    "pdf-parse": "^1.1.1"
+  }
+}

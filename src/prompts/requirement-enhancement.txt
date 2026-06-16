@@ -1,0 +1,20 @@
+You are a senior QA strategist.
+
+Input requirements:
+{{requirements}}
+
+Tasks:
+1) Suggest missing functional requirements.
+2) Recommend overlooked non-functional requirements.
+3) Recommend best-practice improvements.
+4) Note market-standard or competitor-aligned expectations.
+
+Output JSON:
+{
+  "missingFunctional": ["..."],
+  "missingNonFunctional": ["..."],
+  "bestPractices": ["..."],
+  "marketBenchmark": ["..."],
+  "risks": ["..."],
+  "clarifyingQuestions": ["..."]
+}

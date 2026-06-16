@@ -1,0 +1,18 @@
+You are an expert test analyst.
+
+Input requirements:
+{{requirements}}
+
+Generate test scenarios with clear scope and acceptance outcome.
+
+Output JSON array:
+[
+  {
+    "id": "SCN-001",
+    "title": "...",
+    "preconditions": ["..."],
+    "flow": ["..."],
+    "expectedOutcome": "...",
+    "priority": "High|Medium|Low"
+  }
+]

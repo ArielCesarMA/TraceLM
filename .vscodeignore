@@ -1,0 +1,17 @@
+.git/**
+.github/**
+.vscode/**
+src/**
+webview-ui/src/**
+webview-ui/node_modules/**
+node_modules/**
+**/*.map
+**/*.ts
+**/*.tsx
+**/__tests__/**
+jest.config.js
+tsconfig.json
+webview-ui/tsconfig.json
+webview-ui/vite.config.ts
+package-lock.json
+webview-ui/package-lock.json
