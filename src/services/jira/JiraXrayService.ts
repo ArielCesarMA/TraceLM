@@ -64,7 +64,7 @@ export class JiraXrayService {
       return [];
     }
 
-    const jql = `key in (${keys.map((k) => `\"${k.trim()}\"`).join(',')})`;
+    const jql = `key in (${keys.map((k) => `"${k.trim()}"`).join(',')})`;
     return this.searchByJql(jql);
   }
 
@@ -74,14 +74,14 @@ export class JiraXrayService {
       return [];
     }
 
-    const jql = `project = \"${this.projectKey}\" AND (\"Epic Link\" = \"${safeEpicKey}\" OR parent = \"${safeEpicKey}\")`;
+    const jql = `project = "${this.projectKey}" AND ("Epic Link" = "${safeEpicKey}" OR parent = "${safeEpicKey}")`;
     return this.searchByJql(jql);
   }
 
   public async searchStories(query: string): Promise<JiraIssueSummary[]> {
     const q = query.trim();
-    const queryPart = q ? ` AND summary ~ \"${q.replace(/\"/g, '\\"')}*\"` : '';
-    const jql = `project = \"${this.projectKey}\" AND issuetype in (Story, \"User Story\")${queryPart} ORDER BY updated DESC`;
+    const queryPart = q ? ` AND summary ~ "${q.replace(/"/g, "\\\"")}*"` : '';
+    const jql = `project = "${this.projectKey}" AND issuetype in (Story, "User Story")${queryPart} ORDER BY updated DESC`;
     return this.searchByJql(jql, 30);
   }
 
