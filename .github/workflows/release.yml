@@ -31,6 +31,9 @@ jobs:
       - name: Install webview dependencies
         run: npm ci --prefix webview-ui
 
+      - name: Verify tag and package version alignment
+        run: npm run verify:release-version
+
       - name: Validate prompts
         run: npm run validate:prompts
 

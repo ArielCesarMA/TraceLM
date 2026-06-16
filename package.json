@@ -2,7 +2,7 @@
   "name": "tracelm",
   "displayName": "TraceLM",
   "description": "AI-assisted requirement tracing, test generation, and Jira/Xray push workflow",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "local",
   "repository": {
     "type": "git",
@@ -89,6 +89,7 @@
     "typecheck:all": "npm run typecheck && npm run typecheck:webview",
     "audit": "npm audit --omit=dev --audit-level=high && npm audit --omit=dev --audit-level=high --prefix webview-ui",
     "validate:prompts": "node scripts/validate-prompts.cjs",
+    "verify:release-version": "node scripts/verify-release-version.cjs",
     "prepare": "husky",
     "test": "jest",
     "test:coverage": "jest --coverage",
