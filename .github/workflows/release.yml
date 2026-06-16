@@ -1,12 +1,15 @@
-name: CI
+name: Release
 
 on:
   push:
-    branches: [main, master]
-  pull_request:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
 
 jobs:
-  build-test:
+  release:
     runs-on: ubuntu-latest
 
     steps:
@@ -40,31 +43,20 @@ jobs:
       - name: Build
         run: npm run build
 
-  deep-main-checks:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            webview-ui/package-lock.json
-
-      - name: Install root dependencies
-        run: npm ci
-
-      - name: Install webview dependencies
-        run: npm ci --prefix webview-ui
-
-      - name: Security audit
+      - name: Audit
         run: npm run audit
 
       - name: Test with coverage
         run: npm run test:coverage
+
+      - name: Package VSIX
+        run: npm run package:vsix
+
+      - name: Generate changelog
+        run: npm run changelog:generate
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: '*.vsix'
+          generate_release_notes: true
