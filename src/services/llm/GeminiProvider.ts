@@ -4,6 +4,30 @@ import { LLMProvider } from './LLMProvider';
 export class GeminiProvider implements LLMProvider {
   constructor(private readonly apiKey: string) {}
 
+  private readonly transientRetryCount = 3;
+  private readonly fallbackRetryCount = 1;
+
+  private async delay(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private isTransientStatus(status: number): boolean {
+    return status === 429 || status === 503 || status >= 500;
+  }
+
+  private isLikelyTextModel(model: string): boolean {
+    const normalized = this.normalizeModel(model).toLowerCase();
+    return !normalized.includes('tts') && !normalized.includes('audio');
+  }
+
+  private isModalityMismatch(status: number, detail: string): boolean {
+    if (status !== 400) {
+      return false;
+    }
+    const lowered = detail.toLowerCase();
+    return lowered.includes('response modalities') || lowered.includes('accepts the following combination');
+  }
+
   private normalizeModel(model: string): string {
     return model.trim().replace(/^models\//i, '');
   }
@@ -28,6 +52,7 @@ export class GeminiProvider implements LLMProvider {
         const names = (data.models ?? [])
           .filter((model) => (model.supportedGenerationMethods ?? []).includes('generateContent'))
           .map((model) => (model.name ?? '').replace(/^models\//i, '').trim())
+          .filter((name) => this.isLikelyTextModel(name))
           .filter((name) => name.length > 0);
 
         if (names.length > 0) {
@@ -52,6 +77,136 @@ export class GeminiProvider implements LLMProvider {
     }
   }
 
+  private getEndpointCandidates(model: string): string[] {
+    return [
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+        model
+      )}:generateContent?key=${encodeURIComponent(this.apiKey)}`,
+      `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(
+        model
+      )}:generateContent?key=${encodeURIComponent(this.apiKey)}`
+    ];
+  }
+
+  private getFallbackModels(primaryModel: string, availableModels: string[]): string[] {
+    const preferred = [
+      'gemini-2.0-flash',
+      'gemini-2.0-flash-001',
+      'gemini-2.0-flash-lite',
+      'gemini-2.0-flash-lite-001',
+      'gemini-2.5-flash',
+      'gemini-2.5-pro'
+    ];
+
+    const normalizedAvailable = availableModels
+      .map((item) => this.normalizeModel(item))
+      .filter((item) => this.isLikelyTextModel(item));
+    const result = new Set<string>();
+
+    for (const model of preferred) {
+      if (model !== primaryModel && normalizedAvailable.includes(model)) {
+        result.add(model);
+      }
+    }
+
+    for (const model of normalizedAvailable) {
+      if (model !== primaryModel) {
+        result.add(model);
+      }
+    }
+
+    if (result.size === 0 && primaryModel.startsWith('gemini-2.5')) {
+      result.add('gemini-2.0-flash');
+      result.add('gemini-2.0-flash-lite');
+    }
+
+    return Array.from(result);
+  }
+
+  private async completeWithModel(
+    model: string,
+    prompt: string,
+    temperature: number,
+    maxRetries: number
+  ): Promise<{
+    text: string;
+    status: number;
+    detail: string;
+    transientFailure: boolean;
+  }> {
+    const endpointCandidates = this.getEndpointCandidates(model);
+    let lastStatus = 0;
+    let lastDetail = '';
+    let transientFailure = false;
+    const baseBackoffMs = 1200;
+
+    for (const endpoint of endpointCandidates) {
+      for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature
+            }
+          })
+        });
+
+        if (response.ok) {
+          const data = (await response.json()) as {
+            candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+          };
+
+          const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+          return {
+            text,
+            status: 200,
+            detail: '',
+            transientFailure: false
+          };
+        }
+
+        lastStatus = response.status;
+        lastDetail = await this.parseErrorDetail(response);
+
+        if (response.status === 404) {
+          break;
+        }
+
+        if (this.isTransientStatus(response.status)) {
+          transientFailure = true;
+          if (attempt < maxRetries) {
+            const jitterMs = Math.floor(Math.random() * 400);
+            const waitMs = baseBackoffMs * 2 ** attempt + jitterMs;
+            await this.delay(waitMs);
+            continue;
+          }
+          break;
+        }
+
+        if (this.isModalityMismatch(response.status, lastDetail)) {
+          break;
+        }
+
+        throw new Error(
+          `Gemini request failed with status ${response.status}${
+            lastDetail ? `: ${lastDetail}` : '.'
+          }`
+        );
+      }
+    }
+
+    return {
+      text: '',
+      status: lastStatus,
+      detail: lastDetail,
+      transientFailure
+    };
+  }
+
   public async complete(request: LLMRequest): Promise<LLMResponse> {
     if (!this.apiKey) {
       throw new Error('Gemini API key is missing.');
@@ -62,68 +217,56 @@ export class GeminiProvider implements LLMProvider {
       throw new Error('Gemini model is required.');
     }
 
-    const endpointCandidates = [
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-        model
-      )}:generateContent?key=${encodeURIComponent(this.apiKey)}`,
-      `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(
-        model
-      )}:generateContent?key=${encodeURIComponent(this.apiKey)}`
-    ];
-
     const prompt = request.systemPrompt
       ? `${request.systemPrompt}\n\n${request.prompt}`
       : request.prompt;
 
-    let lastStatus = 0;
-    let lastDetail = '';
+    const primaryResult = await this.completeWithModel(
+      model,
+      prompt,
+      request.temperature ?? 0.2,
+      this.transientRetryCount
+    );
 
-    for (const endpoint of endpointCandidates) {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: request.temperature ?? 0.2
-          }
-        })
-      });
-
-      if (response.ok) {
-        const data = (await response.json()) as {
-          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-        };
-
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-        return { text };
-      }
-
-      lastStatus = response.status;
-      lastDetail = await this.parseErrorDetail(response);
-
-      // If model was not found in this API version, try the next endpoint candidate.
-      if (response.status === 404) {
-        continue;
-      }
-
-      throw new Error(
-        `Gemini request failed with status ${response.status}${
-          lastDetail ? `: ${lastDetail}` : '.'
-        }`
-      );
+    if (primaryResult.text) {
+      return { text: primaryResult.text };
     }
 
     const availableModels = await this.listAvailableModels();
+
+    if (primaryResult.transientFailure || this.isModalityMismatch(primaryResult.status, primaryResult.detail)) {
+      const fallbackModels = this.getFallbackModels(model, availableModels);
+      for (const fallbackModel of fallbackModels) {
+        const fallbackResult = await this.completeWithModel(
+          fallbackModel,
+          prompt,
+          request.temperature ?? 0.2,
+          this.fallbackRetryCount
+        );
+
+        if (fallbackResult.text) {
+          return { text: fallbackResult.text };
+        }
+      }
+
+      const fallbackHint =
+        fallbackModels.length > 0
+          ? ` Tried fallback models: ${fallbackModels.slice(0, 4).join(', ')}.`
+          : '';
+      throw new Error(
+        `Gemini request failed with status ${primaryResult.status || 503}${
+          primaryResult.detail ? `: ${primaryResult.detail}` : '.'
+        }${fallbackHint}`
+      );
+    }
+
     const suggestion =
       availableModels.length > 0
         ? ` Available models for this key include: ${availableModels.slice(0, 8).join(', ')}.`
         : '';
     throw new Error(
-      `Gemini request failed with status ${lastStatus || 404}${
-        lastDetail ? `: ${lastDetail}` : '.'
+      `Gemini request failed with status ${primaryResult.status || 404}${
+        primaryResult.detail ? `: ${primaryResult.detail}` : '.'
       } Model '${model}' may be unavailable for this API key.${suggestion}`
     );
   }
