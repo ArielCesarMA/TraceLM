@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 type Settings = {
   llmProvider: string;
@@ -188,7 +188,28 @@ function App(): JSX.Element {
   const [xrayPushPreview, setXrayPushPreview] = useState<XrayPushPreview | null>(null);
   const [xrayPushProgress, setXrayPushProgress] = useState<XrayPushProgress | null>(null);
   const [generationProgress, setGenerationProgress] = useState<string>('');
+  const requirementTextRef = useRef(requirementText);
+  const enhancementRef = useRef(enhancement);
+  const scenariosRef = useRef(scenarios);
+  const testCasesRef = useRef(testCases);
+  const generateAllStepRef = useRef<number>(0);
   const availableModels = useMemo(() => getProviderModels(settings.llmProvider), [settings.llmProvider]);
+
+  useEffect(() => {
+    requirementTextRef.current = requirementText;
+  }, [requirementText]);
+
+  useEffect(() => {
+    enhancementRef.current = enhancement;
+  }, [enhancement]);
+
+  useEffect(() => {
+    scenariosRef.current = scenarios;
+  }, [scenarios]);
+
+  useEffect(() => {
+    testCasesRef.current = testCases;
+  }, [testCases]);
 
   useEffect(() => {
     const handler = (
@@ -244,23 +265,74 @@ function App(): JSX.Element {
         setFeedback(`Pulled ${issues.length} Jira issue(s).`);
       } else if (event.data.command === 'requirements:enhanced') {
         const parsed = JSON.parse(payload.enhancement ?? '{}') as RequirementEnhancement;
-        setEnhancement({ ...emptyEnhancement, ...parsed });
+        const normalizedEnhancement = { ...emptyEnhancement, ...parsed };
+        setEnhancement(normalizedEnhancement);
+        enhancementRef.current = normalizedEnhancement;
         setFeedback('Requirement enhancement complete.');
+
+        if (generateAllStepRef.current === 1) {
+          generateAllStepRef.current = 2;
+          setGenerationProgress('Test Scenarios (2/4)...');
+          window.__TRACELM_VSCODE__?.postMessage({
+            command: 'scenarios:generate',
+            payload: {
+              requirements: requirementTextRef.current,
+              enhancement: JSON.stringify(normalizedEnhancement)
+            }
+          });
+        }
       } else if (event.data.command === 'scenarios:generated') {
         const parsed = JSON.parse(payload.scenarios ?? '[]') as ScenarioItem[];
         setScenarios(parsed);
+        scenariosRef.current = parsed;
         setFeedback(`Generated ${parsed.length} scenario(s).`);
+
+        if (generateAllStepRef.current === 2) {
+          generateAllStepRef.current = 3;
+          setGenerationProgress('Test Cases (3/4)...');
+          window.__TRACELM_VSCODE__?.postMessage({
+            command: 'testCases:generate',
+            payload: { scenarios: JSON.stringify(parsed) }
+          });
+        }
       } else if (event.data.command === 'testCases:generated') {
         const parsed = JSON.parse(payload.testCases ?? '[]') as TestCaseItem[];
         setTestCases(parsed);
+        testCasesRef.current = parsed;
         setXrayPushedIssues([]);
         setFeedback(`Generated ${parsed.length} test case(s).`);
+
+        if (generateAllStepRef.current === 3) {
+          generateAllStepRef.current = 4;
+          setGenerationProgress('Automation Analysis (4/4)...');
+          window.__TRACELM_VSCODE__?.postMessage({
+            command: 'automation:analyze',
+            payload: {
+              requirements: requirementTextRef.current,
+              enhancement: JSON.stringify(enhancementRef.current),
+              scenarios: JSON.stringify(scenariosRef.current),
+              testCases: JSON.stringify(parsed)
+            }
+          });
+        }
       } else if (event.data.command === 'automation:analyzed') {
         const parsed = JSON.parse(payload.analysis ?? '{}') as AutomationAnalysis;
         setAutomation(parsed);
-        setFeedback('Automation analysis completed.');
+        if (generateAllStepRef.current === 4) {
+          generateAllStepRef.current = 0;
+          setGenerationProgress('');
+          setFeedback('All artifacts generated successfully.');
+        } else {
+          setFeedback('Automation analysis completed.');
+        }
       } else if (event.data.command === 'requirements:error') {
-        setFeedback(`TraceLM: ${payload.message ?? 'Unknown error.'}`);
+        if (generateAllStepRef.current > 0) {
+          generateAllStepRef.current = 0;
+          setGenerationProgress('');
+          setFeedback(`Generate All stopped: ${payload.message ?? 'Unknown error.'}`);
+        } else {
+          setFeedback(`TraceLM: ${payload.message ?? 'Unknown error.'}`);
+        }
       } else if (event.data.command === 'xray:pushed') {
         const parsed = JSON.parse(payload.pushed ?? '[]') as Array<{
           localId: string;
@@ -456,56 +528,14 @@ function App(): JSX.Element {
       return;
     }
 
-    setGenerationProgress('Starting enhancement...');
+    generateAllStepRef.current = 1;
+    setGenerationProgress('Requirement Enhancement (1/4)...');
     setFeedback('Generating all artifacts sequentially...');
 
-    let currentStep = 0;
-    const steps = [
-      {
-        name: 'Requirement Enhancement',
-        command: 'requirements:enhance',
-        payload: { requirements: requirementText }
-      },
-      {
-        name: 'Test Scenarios',
-        command: 'scenarios:generate',
-        payload: { requirements: requirementText, enhancement: JSON.stringify(enhancement) }
-      },
-      {
-        name: 'Test Cases',
-        command: 'testCases:generate',
-        payload: { scenarios: JSON.stringify(scenarios) }
-      },
-      {
-        name: 'Automation Analysis',
-        command: 'automation:analyze',
-        payload: {
-          requirements: requirementText,
-          enhancement: JSON.stringify(enhancement),
-          scenarios: JSON.stringify(scenarios),
-          testCases: JSON.stringify(testCases)
-        }
-      }
-    ];
-
-    const executeStep = (): void => {
-      if (currentStep >= steps.length) {
-        setGenerationProgress('');
-        setFeedback('All artifacts generated successfully!');
-        return;
-      }
-
-      const step = steps[currentStep];
-      setGenerationProgress(`${step.name} (${currentStep + 1}/${steps.length})...`);
-      currentStep += 1;
-
-      window.__TRACELM_VSCODE__?.postMessage({
-        command: step.command,
-        payload: step.payload
-      });
-    };
-
-    executeStep();
+    window.__TRACELM_VSCODE__?.postMessage({
+      command: 'requirements:enhance',
+      payload: { requirements: requirementText }
+    });
   };
 
   const generateScenarios = (): void => {
@@ -780,7 +810,14 @@ function App(): JSX.Element {
       {activeTab === 'requirements' && (
         <section className="panel">
           <h2>Requirements</h2>
-          <div className="field-stack"><label htmlFor="requirementsText">Free Text Input</label><textarea id="requirementsText" className="requirements-text" value={requirementText} onChange={(e) => { setRequirementText(e.target.value); setRequirementsReviewed(false); }} placeholder="Paste requirement text, user stories, BRD/SRS content, or pulled Jira details..." /></div>
+          <div className="requirements-header">
+            <label htmlFor="requirementsText">Free Text Input</label>
+            <div className="requirements-header-actions">
+              <button type="button" onClick={generateAll} disabled={generationProgress.length > 0}>Generate All Artifacts</button>
+              {generationProgress && <span className="progress-message">{generationProgress}</span>}
+            </div>
+          </div>
+          <div className="field-stack"><textarea id="requirementsText" className="requirements-text" value={requirementText} onChange={(e) => { setRequirementText(e.target.value); setRequirementsReviewed(false); }} placeholder="Paste requirement text, user stories, BRD/SRS content, or pulled Jira details..." /></div>
           <div className="review-box">
             <label className="story-item">
               <input
@@ -860,10 +897,6 @@ function App(): JSX.Element {
         <section className="panel">
           <h2>Test Cases</h2>
           <p className="helper-text">Generate test cases from scenarios with Gherkin and structured table output.</p>
-          <div className="button-row">
-            <button type="button" onClick={generateAll} disabled={generationProgress.length > 0}>Generate All Artifacts</button>
-            {generationProgress && <span className="progress-message">{generationProgress}</span>}
-          </div>
           <div className="button-row">
             <button type="button" onClick={generateTestCases}>Generate Test Cases</button>
             <button type="button" onClick={exportTestCasesGherkin} disabled={!testCases.length}>Export .feature</button>
