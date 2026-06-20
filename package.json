@@ -2,7 +2,7 @@
   "name": "tracelm",
   "displayName": "TraceLM",
   "description": "AI-assisted requirement tracing, test generation, and Jira/Xray push workflow",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "publisher": "local",
   "repository": {
     "type": "git",
