@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { randomBytes } from 'crypto';
 import { DocumentParser, UploadedFilePayload } from '../services/document/DocumentParser';
 import {
   JiraIssueSummary,
@@ -154,8 +155,15 @@ export class TraceLMPanel {
 
         if (message.command === 'settings:save') {
           const payload = this.normalizePayload(message.payload);
-          await this.saveSettings(payload);
-          this.panel.webview.postMessage({ command: 'settings:saved' });
+          try {
+            await this.saveSettings(payload);
+            this.panel.webview.postMessage({ command: 'settings:saved' });
+          } catch (err) {
+            this.panel.webview.postMessage({
+              command: 'requirements:error',
+              payload: { message: `Failed to save settings: ${err instanceof Error ? err.message : String(err)}` }
+            });
+          }
           return;
         }
 
@@ -435,10 +443,9 @@ export class TraceLMPanel {
 
             const service = this.createJiraService(settings);
             this.batchProcessor.updateConfig({
-              batchSize: Number(settings.xrayBatchSize) || DEFAULT_BATCH_CONFIG.batchSize,
-              delayBetweenBatchesMs:
-                Number(settings.xrayBatchDelayMs) || DEFAULT_BATCH_CONFIG.delayBetweenBatchesMs,
-              maxRetries: Number(settings.xrayMaxRetries) || DEFAULT_BATCH_CONFIG.maxRetries
+              batchSize: Math.min(100, Math.max(1, Number(settings.xrayBatchSize) || DEFAULT_BATCH_CONFIG.batchSize)),
+              delayBetweenBatchesMs: Math.min(30000, Math.max(0, Number(settings.xrayBatchDelayMs) || DEFAULT_BATCH_CONFIG.delayBetweenBatchesMs)),
+              maxRetries: Math.min(10, Math.max(1, Number(settings.xrayMaxRetries) || DEFAULT_BATCH_CONFIG.maxRetries))
             });
             const pushRecords = this.getXrayPushRecords();
             const fingerprintByLocalId = new Map<string, string>();
@@ -702,27 +709,31 @@ export class TraceLMPanel {
 
   private async saveSettings(payload: SettingsPayload): Promise<void> {
     const config = vscode.workspace.getConfiguration('tracelm');
+    // Use Global target when no workspace folder is open; Workspace otherwise.
+    const target = vscode.workspace.workspaceFolders?.length
+      ? vscode.ConfigurationTarget.Workspace
+      : vscode.ConfigurationTarget.Global;
 
     await Promise.all([
-      config.update('llmProvider', payload.llmProvider, vscode.ConfigurationTarget.Workspace),
-      config.update('llmModel', payload.llmModel, vscode.ConfigurationTarget.Workspace),
-      config.update('jiraUrl', payload.jiraUrl, vscode.ConfigurationTarget.Workspace),
-      config.update('jiraProjectKey', payload.jiraProjectKey, vscode.ConfigurationTarget.Workspace),
-      config.update('jiraEmail', payload.jiraEmail, vscode.ConfigurationTarget.Workspace),
+      config.update('llmProvider', payload.llmProvider, target),
+      config.update('llmModel', payload.llmModel, target),
+      config.update('jiraUrl', payload.jiraUrl, target),
+      config.update('jiraProjectKey', payload.jiraProjectKey, target),
+      config.update('jiraEmail', payload.jiraEmail, target),
       config.update(
         'xrayBatchSize',
         Math.max(1, Number(payload.xrayBatchSize) || DEFAULT_BATCH_CONFIG.batchSize),
-        vscode.ConfigurationTarget.Workspace
+        target
       ),
       config.update(
         'xrayBatchDelayMs',
         Math.max(0, Number(payload.xrayBatchDelayMs) || DEFAULT_BATCH_CONFIG.delayBetweenBatchesMs),
-        vscode.ConfigurationTarget.Workspace
+        target
       ),
       config.update(
         'xrayMaxRetries',
         Math.max(1, Number(payload.xrayMaxRetries) || DEFAULT_BATCH_CONFIG.maxRetries),
-        vscode.ConfigurationTarget.Workspace
+        target
       ),
       this.extensionContext.secrets.store(SECRET_KEYS.llmApiKey, payload.llmApiKey),
       this.extensionContext.secrets.store(SECRET_KEYS.jiraApiToken, payload.jiraApiToken),
@@ -1325,11 +1336,6 @@ export class TraceLMPanel {
   }
 
   private static getNonce(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let value = '';
-    for (let i = 0; i < 32; i += 1) {
-      value += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return value;
+    return randomBytes(16).toString('hex'); // 32-char hex, cryptographically secure
   }
 }
