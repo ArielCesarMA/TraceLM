@@ -20,6 +20,7 @@ type Refs = {
   requirementTextRef: MutableRefObject<string>;
   enhancementRef: MutableRefObject<RequirementEnhancement>;
   scenariosRef: MutableRefObject<ScenarioItem[]>;
+  lastGenIdRef: MutableRefObject<Record<string, string>>;
 };
 
 type Setters = {
@@ -33,6 +34,9 @@ type Setters = {
   setStoryOptions: Dispatch<SetStateAction<JiraIssueSummary[]>>;
   setPulledIssues: Dispatch<SetStateAction<JiraIssueSummary[]>>;
   setEnhancement: Dispatch<SetStateAction<RequirementEnhancement>>;
+  onEnhancementReceived?: () => void;
+  onScenariosReceived?: () => void;
+  onChainSettled?: () => void;
   setScenarios: Dispatch<SetStateAction<ScenarioItem[]>>;
   setTestCases: Dispatch<SetStateAction<TestCaseItem[]>>;
   setXrayPushedIssues: Dispatch<SetStateAction<XrayPushedIssue[]>>;
@@ -52,17 +56,21 @@ type InboundMessage = {
 
 export function useTraceLMMessages(params: UseTraceLMMessagesParams): void {
   const {
-    generateAllStepRef, requirementTextRef, enhancementRef, scenariosRef,
+    generateAllStepRef, requirementTextRef, enhancementRef, scenariosRef, lastGenIdRef,
     setStatus, setFeedback, setIsBusy, setSettings,
     setRequirementText, setRequirementsReviewed,
     setParsedFiles, setStoryOptions, setPulledIssues,
     setEnhancement, setScenarios, setTestCases,
     setXrayPushedIssues, setAutomation,
     setXrayPushPreview, setXrayPushProgress, setGenerationProgress,
+    onEnhancementReceived,
+    onScenariosReceived,
+    onChainSettled,
   } = params;
 
   useEffect(() => {
     const handler = (event: MessageEvent<InboundMessage>) => {
+      try {
       const payload = event.data.payload ?? {};
 
       if (event.data.command === 'pong') {
@@ -122,10 +130,12 @@ export function useTraceLMMessages(params: UseTraceLMMessagesParams): void {
         setFeedback(`Pulled ${issues.length} Jira issue(s).`);
 
       } else if (event.data.command === 'requirements:enhanced') {
+        if (payload.genId) lastGenIdRef.current['enhancement'] = payload.genId;
         const parsed = JSON.parse(payload.enhancement ?? '{}') as RequirementEnhancement;
         const normalized = { ...emptyEnhancement, ...parsed };
         setEnhancement(normalized);
         enhancementRef.current = normalized;
+        onEnhancementReceived?.();
         setFeedback('Requirement enhancement complete.');
 
         if (generateAllStepRef.current === 1) {
@@ -140,50 +150,79 @@ export function useTraceLMMessages(params: UseTraceLMMessagesParams): void {
         }
 
       } else if (event.data.command === 'scenarios:generated') {
+        if (payload.genId) lastGenIdRef.current['scenarios'] = payload.genId;
         const parsed = JSON.parse(payload.scenarios ?? '[]') as ScenarioItem[];
         setScenarios(parsed);
         scenariosRef.current = parsed;
+        onScenariosReceived?.();
         setFeedback(`Generated ${parsed.length} scenario(s).`);
 
         if (generateAllStepRef.current === 2) {
-          generateAllStepRef.current = 3;
-          setGenerationProgress('Test Cases (3/4)...');
-          window.__TRACELM_VSCODE__?.postMessage({
-            command: 'testCases:generate',
-            payload: { scenarios: JSON.stringify(parsed) },
-          });
+          if (parsed.length === 0) {
+            generateAllStepRef.current = 0;
+            setGenerationProgress('');
+            setIsBusy(false);
+            setFeedback('Generate All stopped: scenario generation returned no results. Please try again.');
+          } else if (!window.__TRACELM_VSCODE__) {
+            generateAllStepRef.current = 0;
+            setGenerationProgress('');
+            setIsBusy(false);
+            setFeedback('Lost connection to extension. Please re-open TraceLM.');
+          } else {
+            generateAllStepRef.current = 3;
+            setGenerationProgress('Test Cases (3/4)...');
+            window.__TRACELM_VSCODE__.postMessage({
+              command: 'testCases:generate',
+              payload: { scenarios: JSON.stringify(parsed) },
+            });
+          }
         } else {
           setIsBusy(false);
         }
 
       } else if (event.data.command === 'testCases:generated') {
+        if (payload.genId) lastGenIdRef.current['testCases'] = payload.genId;
         const parsed = JSON.parse(payload.testCases ?? '[]') as TestCaseItem[];
         setTestCases(parsed);
         setXrayPushedIssues([]);
         setFeedback(`Generated ${parsed.length} test case(s).`);
 
         if (generateAllStepRef.current === 3) {
-          generateAllStepRef.current = 4;
-          setGenerationProgress('Automation Analysis (4/4)...');
-          window.__TRACELM_VSCODE__?.postMessage({
-            command: 'automation:analyze',
-            payload: {
-              requirements: requirementTextRef.current,
-              enhancement: JSON.stringify(enhancementRef.current),
-              scenarios: JSON.stringify(scenariosRef.current),
-              testCases: JSON.stringify(parsed),
-            },
-          });
+          if (parsed.length === 0) {
+            generateAllStepRef.current = 0;
+            setGenerationProgress('');
+            setIsBusy(false);
+            setFeedback('Generate All stopped: test case generation returned no results. Please try again.');
+          } else if (!window.__TRACELM_VSCODE__) {
+            generateAllStepRef.current = 0;
+            setGenerationProgress('');
+            setIsBusy(false);
+            setFeedback('Lost connection to extension. Please re-open TraceLM.');
+          } else {
+            generateAllStepRef.current = 4;
+            setGenerationProgress('Automation Analysis (4/4)...');
+            window.__TRACELM_VSCODE__.postMessage({
+              command: 'automation:analyze',
+              payload: {
+                requirements: requirementTextRef.current,
+                enhancement: JSON.stringify(enhancementRef.current),
+                scenarios: JSON.stringify(scenariosRef.current),
+                testCases: JSON.stringify(parsed),
+              },
+            });
+          }
         } else {
           setIsBusy(false);
         }
 
       } else if (event.data.command === 'automation:analyzed') {
+        if (payload.genId) lastGenIdRef.current['automation'] = payload.genId;
         setIsBusy(false);
         const parsed = JSON.parse(payload.analysis ?? '{}') as AutomationAnalysis;
         setAutomation(parsed);
         if (generateAllStepRef.current === 4) {
           generateAllStepRef.current = 0;
+          onChainSettled?.();
           setGenerationProgress('done');
           setFeedback('All artifacts generated successfully.');
           setTimeout(() => setGenerationProgress(''), 2000);
@@ -195,10 +234,41 @@ export function useTraceLMMessages(params: UseTraceLMMessagesParams): void {
         setIsBusy(false);
         if (generateAllStepRef.current > 0) {
           generateAllStepRef.current = 0;
+          onChainSettled?.();
           setGenerationProgress('');
           setFeedback(`Generate All stopped: ${payload.message ?? 'Unknown error.'}`);
         } else {
           setFeedback(`TraceLM: ${payload.message ?? 'Unknown error.'}`);
+        }
+
+      } else if (event.data.command === 'requirements:enhancementFixed') {
+        // Only apply if this fix belongs to the most recent enhancement generation.
+        if (!payload.genId || lastGenIdRef.current['enhancement'] === payload.genId) {
+          const parsed = JSON.parse(payload.enhancement ?? '{}') as RequirementEnhancement;
+          const normalized = { ...emptyEnhancement, ...parsed };
+          setEnhancement(normalized);
+          enhancementRef.current = normalized;
+        }
+
+      } else if (event.data.command === 'scenarios:fixed') {
+        if (!payload.genId || lastGenIdRef.current['scenarios'] === payload.genId) {
+          const parsed = JSON.parse(payload.scenarios ?? '[]') as ScenarioItem[];
+          if (parsed.length > 0) {
+            setScenarios(parsed);
+            scenariosRef.current = parsed;
+          }
+        }
+
+      } else if (event.data.command === 'testCases:fixed') {
+        if (!payload.genId || lastGenIdRef.current['testCases'] === payload.genId) {
+          const parsed = JSON.parse(payload.testCases ?? '[]') as TestCaseItem[];
+          if (parsed.length > 0) setTestCases(parsed);
+        }
+
+      } else if (event.data.command === 'automation:fixed') {
+        if (!payload.genId || lastGenIdRef.current['automation'] === payload.genId) {
+          const parsed = JSON.parse(payload.analysis ?? '{}') as AutomationAnalysis;
+          setAutomation(parsed);
         }
 
       } else if (event.data.command === 'xray:pushed') {
@@ -244,6 +314,12 @@ export function useTraceLMMessages(params: UseTraceLMMessagesParams): void {
         setIsBusy(false);
         setXrayPushedIssues([]);
         setFeedback(payload.message ?? 'Push history cleared.');
+      }
+      } catch {
+        setIsBusy(false);
+        generateAllStepRef.current = 0;
+        setGenerationProgress('');
+        setFeedback('An error occurred processing the response.');
       }
     };
 

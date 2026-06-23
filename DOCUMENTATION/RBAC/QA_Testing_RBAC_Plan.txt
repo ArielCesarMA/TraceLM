@@ -1,0 +1,178 @@
+QA TESTING PLATFORM RBAC PLAN
+
+ROLES
+
+* Admin
+* Test Manager
+* Quality Architect
+* Quality Engineer
+* Test Analyst
+* Tester
+* Performance Lead
+* Performance Tester
+
+ROLE HIERARCHY
+
+Admin
+│
+├── Test Manager
+│   ├── Quality Architect
+│   ├── Test Analyst
+│   └── Tester
+│
+└── Performance Lead
+└── Performance Tester
+
+RESOURCES
+
+Users
+Projects
+Requirements
+Test Plans
+Test Cases
+Test Suites
+Test Executions
+Defects
+Reports
+Dashboards
+Automation Assets
+Performance Tests
+Performance Results
+Settings
+Audit Logs
+
+ROLE RESPONSIBILITIES
+
+Admin
+
+* Full system access
+
+Test Manager
+
+* Approve Test Plans
+* Assign Work
+* Manage Releases
+
+Quality Architect
+
+* Define Testing Strategy
+* Create Standards
+* Build Frameworks
+
+Quality Engineer
+
+* Build Automation
+* Maintain Frameworks
+* Improve Quality Coverage
+
+Test Analyst
+
+* Analyze Requirements
+* Create Test Cases
+* Build Traceability
+
+Tester
+
+* Execute Tests
+* Log Defects
+* Record Results
+
+Performance Lead
+
+* Define Performance Strategy
+* Approve Performance Tests
+* Review Results
+
+Performance Tester
+
+* Execute Load Tests
+* Capture Metrics
+* Analyze Bottlenecks
+
+PERMISSION MODEL
+
+resource:view
+resource:create
+resource:update
+resource:delete
+resource:approve
+resource:assign
+resource:execute
+resource:export
+resource:manage
+
+UI STRUCTURE
+
+Settings
+├── Members
+├── Roles
+├── Projects
+├── Permissions
+├── Audit Logs
+
+WORKFLOW
+
+Functional Testing
+
+Test Analyst
+↓
+Creates Test Cases
+
+Quality Architect
+↓
+Reviews
+
+Test Manager
+↓
+Approves
+
+Tester
+↓
+Executes
+
+Performance Testing
+
+Performance Tester
+↓
+Creates Execution
+
+Performance Lead
+↓
+Approves
+
+Performance Tester
+↓
+Runs Test
+
+Performance Lead
+↓
+Reviews Results
+
+DATABASE DESIGN
+
+users
+roles
+permissions
+role_permissions
+user_roles
+projects
+user_project_roles
+
+PROJECT SCOPING
+
+User
+↓
+Role
+↓
+Project Scope
+
+Example:
+
+User: John
+Role: Tester
+Projects:
+
+* Project Alpha
+* Project Beta
+
+This avoids creating project-specific roles and keeps RBAC maintainable.

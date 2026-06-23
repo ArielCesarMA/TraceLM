@@ -50,9 +50,13 @@ export type RequirementEnhancement = {
   clarifyingQuestions: string[];
 };
 
+export type ScenarioType = 'HP' | 'AF' | 'EC' | 'EG' | 'BR';
+export type ScenarioPriority = 'Critical' | 'High' | 'Medium' | 'Low';
+
 export type ScenarioItem = {
   id: string;
   title: string;
+  type?: ScenarioType;
   requirementRefs: string[];
   preconditions: string[];
   flow: string[];
@@ -76,12 +80,19 @@ export type TestCaseItem = {
 
 export type AutomationCandidateItem = {
   testCaseId: string;
+  scenarioId: string;
+  requirementRef: string;
   candidate: boolean;
   exclusionReason: string;
+  feasibilityLevel: 'High' | 'Medium' | 'Low' | 'Not Feasible' | 'Evidence Required';
   feasibility: number;
+  roiLevel: 'High' | 'Medium' | 'Low' | 'Negative' | 'Evidence Required';
   roiScore: number;
   layer: 'Unit' | 'API' | 'UI';
-  priority: 'Automate First' | 'Automate Second' | 'Manual/Deferred';
+  priority: 'P1' | 'P2' | 'P3' | 'P4';
+  playwrightAutomatable: 'Yes' | 'Partial' | 'No';
+  playwrightScope: 'UI' | 'API' | 'N/A';
+  blocker: string;
   notes: string;
 };
 

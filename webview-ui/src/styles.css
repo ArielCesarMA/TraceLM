@@ -202,15 +202,20 @@ hr {
   align-items: center;
   gap: 6px;
   margin-bottom: 10px;
+  flex-wrap: wrap;
 }
 
 .layer-filter-label {
   font-size: 11px;
+  font-weight: 600;
   color: var(--vscode-descriptionForeground);
   margin-right: 2px;
 }
 
 .layer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 11px;
   font-weight: 600;
   padding: 3px 10px;
@@ -222,7 +227,7 @@ hr {
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
-.layer-chip:hover {
+.layer-chip:hover:not(:disabled) {
   border-color: var(--vscode-foreground);
   color: var(--vscode-foreground);
 }
@@ -244,6 +249,33 @@ hr {
 .layer-chip--active.layer-chip--UI {
   background: #6f42c1;
   border-color: #6f42c1;
+}
+
+/* Chip with 0 test cases — greyed out, not clickable */
+.layer-chip--empty,
+.layer-chip:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  border-style: dashed;
+}
+
+.layer-chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.18);
+  color: inherit;
+  line-height: 1;
+}
+
+.layer-chip--active .layer-chip-count {
+  background: rgba(255, 255, 255, 0.28);
 }
 
 .layer-filter-count {
@@ -720,9 +752,10 @@ button:disabled {
   letter-spacing: 0.03em;
 }
 
-.priority-badge--first    { background: #2ea043; color: #fff; }
-.priority-badge--second   { background: #bf8700; color: #fff; }
-.priority-badge--deferred { background: var(--vscode-panel-border); color: var(--vscode-descriptionForeground); }
+.priority-badge--p1 { background: #2ea043; color: #fff; }
+.priority-badge--p2 { background: #0969da; color: #fff; }
+.priority-badge--p3 { background: #bf8700; color: #fff; }
+.priority-badge--p4 { background: var(--vscode-panel-border); color: var(--vscode-descriptionForeground); }
 
 .auto-card-metrics {
   display: flex;
@@ -758,21 +791,11 @@ button:disabled {
   line-height: 1.4;
 }
 
-/* ── Scenario card header (index + delete) ───────────────────────────────── */
-
-.scenario-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-}
-
 .scenario-card-index {
   font-size: 11px;
   font-weight: 600;
   color: var(--vscode-descriptionForeground);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  flex-shrink: 0;
 }
 
 .scenario-delete-btn {
@@ -822,6 +845,347 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── Scenario tab ────────────────────────────────────────────────────────── */
+
+.scn-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--vscode-badge-background) 12%, transparent);
+  border: 1px solid var(--vscode-panel-border);
+  font-size: 12px;
+}
+
+.scn-summary-total {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.scn-summary-divider {
+  color: var(--vscode-panel-border);
+  font-weight: 300;
+}
+
+.scn-summary-timestamp {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+}
+
+.scn-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.scn-badge--hp  { background: #2ea043; color: #fff; }
+.scn-badge--af  { background: #0969da; color: #fff; }
+.scn-badge--ec  { background: #8250df; color: #fff; }
+.scn-badge--eg  { background: #cf222e; color: #fff; }
+.scn-badge--br  { background: #bf8700; color: #fff; }
+
+.scn-badge--critical { background: #cf222e; color: #fff; }
+.scn-badge--high     { background: #e36209; color: #fff; }
+.scn-badge--medium   { background: #bf8700; color: #fff; }
+.scn-badge--low      { background: var(--vscode-panel-border); color: var(--vscode-descriptionForeground); }
+
+.scn-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.scn-filter-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--vscode-foreground);
+}
+
+.scn-filter-label select {
+  font-size: 12px;
+  padding: 2px 6px;
+  background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+}
+
+.scn-filter-count {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+
+.scenario-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--vscode-panel-background, var(--vscode-editor-background)) 60%, transparent);
+  border-bottom: 1px solid var(--vscode-panel-border);
+  user-select: none;
+}
+
+.scenario-card-header:hover {
+  background: color-mix(in srgb, var(--vscode-list-hoverBackground) 50%, transparent);
+}
+
+.scenario-card-title {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scenario-card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.scenario-card-body {
+  padding: 10px 14px 14px;
+}
+
+/* ── Enhancement tab ─────────────────────────────────────────────────────── */
+
+.enh-filter-dropdown {
+  position: relative;
+}
+
+.enh-filter-trigger {
+  white-space: nowrap;
+}
+
+.enh-filter-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  min-width: 210px;
+  background: var(--vscode-dropdown-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  padding: 6px 0;
+}
+
+.enh-filter-popover-header {
+  display: flex;
+  gap: 6px;
+  padding: 4px 10px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  margin-bottom: 4px;
+}
+
+.enh-filter-popover-action {
+  font-size: 11px;
+  padding: 1px 8px;
+  background: none;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--vscode-foreground);
+}
+
+.enh-filter-popover-action:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.enh-filter-popover-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  user-select: none;
+}
+
+.enh-filter-popover-item:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.enh-filter-popover-item span:first-of-type {
+  flex: 1;
+}
+
+.enh-filter-popover-count {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.enh-summary-timestamp {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+}
+
+.enh-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--vscode-badge-background) 12%, transparent);
+  border: 1px solid var(--vscode-panel-border);
+  font-size: 12px;
+}
+
+.enh-summary-total {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.enh-summary-item {
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
+.enhancement-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.enh-card {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.enh-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--vscode-panel-background, var(--vscode-editor-background)) 60%, transparent);
+  user-select: none;
+}
+
+.enh-card-header:hover {
+  background: color-mix(in srgb, var(--vscode-list-hoverBackground) 50%, transparent);
+}
+
+.enh-card-header h3 {
+  margin: 0;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.enh-card-count {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.enh-card-toggle {
+  background: none;
+  border: none;
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.enh-card-body {
+  padding: 10px 14px 14px;
+}
+
+.enh-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.enh-copy-all-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.enh-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.enh-list-item:last-child {
+  border-bottom: none;
+}
+
+.enh-list-item-text {
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.enh-list-item-text:hover {
+  text-decoration: underline dotted var(--vscode-descriptionForeground);
+}
+
+.enh-item-textarea {
+  flex: 1;
+  resize: vertical;
+  min-height: 60px;
+  font-family: var(--vscode-font-family);
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-focusBorder);
+  border-radius: 3px;
+  padding: 4px 6px;
+}
+
+.enh-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.enh-item-delete-btn {
+  background: none;
+  border: none;
+  color: var(--vscode-errorForeground);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  opacity: 0.6;
+}
+
+.enh-item-delete-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--vscode-errorForeground) 15%, transparent);
 }
 
 /* ── StepStepper completion flash ────────────────────────────────────────── */

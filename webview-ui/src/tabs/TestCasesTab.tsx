@@ -97,18 +97,25 @@ export const TestCasesTab = memo(function TestCasesTab({
       ) : (
         <>
           <div className="layer-filter">
-            <span className="layer-filter-label">Layer:</span>
-            {ALL_LAYERS.map((layer) => (
-              <button
-                key={layer}
-                type="button"
-                className={`layer-chip layer-chip--${layer}${activeLayers.has(layer) ? ' layer-chip--active' : ''}`}
-                onClick={() => toggleLayer(layer)}
-                aria-pressed={activeLayers.has(layer)}
-              >
-                {layer}
-              </button>
-            ))}
+            <span className="layer-filter-label">Filter by Layer:</span>
+            {ALL_LAYERS.map((layer) => {
+              const count = testCases.filter((tc) => tc.layer === layer).length;
+              const isEmpty = count === 0;
+              const isActive = activeLayers.has(layer);
+              return (
+                <button
+                  key={layer}
+                  type="button"
+                  className={`layer-chip layer-chip--${layer}${isActive && !isEmpty ? ' layer-chip--active' : ''}${isEmpty ? ' layer-chip--empty' : ''}`}
+                  onClick={() => !isEmpty && toggleLayer(layer)}
+                  disabled={isEmpty}
+                  aria-pressed={isActive && !isEmpty}
+                  title={isEmpty ? `No ${layer} test cases generated` : `${count} ${layer} test case${count !== 1 ? 's' : ''} — click to toggle`}
+                >
+                  {layer} <span className="layer-chip-count">{count}</span>
+                </button>
+              );
+            })}
             {filteredTestCases.length !== testCases.length && (
               <span className="layer-filter-count">
                 {filteredTestCases.length} of {testCases.length} shown
