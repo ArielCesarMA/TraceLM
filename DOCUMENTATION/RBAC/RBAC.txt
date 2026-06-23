@@ -1,0 +1,107 @@
+RBAC BEST PRACTICES & UI DESIGN
+
+1. ROLES PAGE
+
+Admin
+Manager
+Editor
+Viewer
+Billing Manager
+
+Roles should be reusable templates.
+
+2. PERMISSIONS MATRIX
+
+Resource | View | Create | Edit | Delete
+
+This matrix is the easiest UI for administrators to understand.
+
+3. USER ASSIGNMENT
+
+Users get Roles.
+Roles get Permissions.
+
+Avoid assigning permissions directly to users.
+
+4. RESOURCE SCOPES
+
+Role + Scope
+
+Example:
+Project Manager
+
+* Project Alpha
+* Project Beta
+
+This prevents role explosion.
+
+RECOMMENDED ARCHITECTURE
+
+Users
+Roles
+Permissions
+Role Permissions
+User Roles
+Resources
+Resource Scopes
+
+PERMISSION NAMING
+
+users:view
+users:create
+users:update
+users:delete
+
+projects:view
+projects:create
+projects:update
+projects:delete
+
+billing:view
+billing:update
+
+UI STRUCTURE
+
+Settings
+├── Members
+├── Roles
+├── Permissions
+├── Audit Logs
+
+ROLLOUT PLAN
+
+Phase 1
+
+* Users
+* Roles
+* Permissions
+* User Roles
+
+Phase 2
+
+* Permission Matrix
+* Audit Logging
+* Role Assignment UI
+
+Phase 3
+
+* Resource Scoping
+
+Phase 4
+
+* Custom Roles
+* Role Cloning
+
+Phase 5
+
+* ABAC / ReBAC
+
+Recommended model:
+
+Users
+↓
+Roles
+↓
+Permissions
+↓
+Resource Scope

@@ -11,13 +11,14 @@ type Props = {
 };
 
 const PRIORITY_META: Record<AutomationCandidateItem['priority'], { cls: string; label: string }> = {
-  'Automate First':    { cls: 'priority-badge--first',    label: 'Automate First' },
-  'Automate Second':   { cls: 'priority-badge--second',   label: 'Automate Second' },
-  'Manual/Deferred':   { cls: 'priority-badge--deferred', label: 'Manual / Deferred' },
+  P1: { cls: 'priority-badge--p1', label: 'P1 — Automate Now' },
+  P2: { cls: 'priority-badge--p2', label: 'P2 — Next Release' },
+  P3: { cls: 'priority-badge--p3', label: 'P3 — Backlog' },
+  P4: { cls: 'priority-badge--p4', label: 'P4 — Manual Only' },
 };
 
 function AutoCard({ item }: { item: AutomationCandidateItem }): JSX.Element {
-  const { cls, label } = PRIORITY_META[item.priority] ?? PRIORITY_META['Manual/Deferred'];
+  const { cls, label } = PRIORITY_META[item.priority] ?? PRIORITY_META['P3'];
   return (
     <div className={`auto-card${!item.candidate ? ' auto-card--excluded' : ''}`}>
       <div className="auto-card-header">
@@ -27,17 +28,27 @@ function AutoCard({ item }: { item: AutomationCandidateItem }): JSX.Element {
       <div className="auto-card-metrics">
         <span className="auto-card-metric">
           <span className="auto-card-metric-label">ROI</span>
-          <span className="auto-card-metric-value">{item.roiScore.toFixed(1)}</span>
+          <span className="auto-card-metric-value">{item.roiLevel}</span>
         </span>
         <span className="auto-card-metric">
           <span className="auto-card-metric-label">Feasibility</span>
-          <span className="auto-card-metric-value">{item.feasibility.toFixed(1)}</span>
+          <span className="auto-card-metric-value">{item.feasibilityLevel}</span>
         </span>
         <span className="auto-card-metric">
           <span className="auto-card-metric-label">Layer</span>
           <span className="auto-card-metric-value">{item.layer}</span>
         </span>
+        <span className="auto-card-metric">
+          <span className="auto-card-metric-label">Playwright</span>
+          <span className="auto-card-metric-value">{item.playwrightAutomatable}</span>
+        </span>
       </div>
+      {item.playwrightScope !== 'N/A' && (
+        <p className="auto-card-notes" style={{ marginBottom: 2 }}>Scope: {item.playwrightScope}</p>
+      )}
+      {item.blocker && (
+        <p className="auto-card-exclusion">Blocker: {item.blocker}</p>
+      )}
       {!item.candidate && item.exclusionReason && (
         <p className="auto-card-exclusion">Excluded: {item.exclusionReason}</p>
       )}

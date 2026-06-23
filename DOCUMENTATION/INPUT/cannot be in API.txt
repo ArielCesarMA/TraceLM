@@ -1,0 +1,44 @@
+When a user types into the 'Password' registration field, a real-time hint list must dynamically change color to green as individual criteria are met (e.g., minimum 8 characters, at least 1 number). If the user attempts to click 'Submit' while criteria are missing, the submit button must remain visually disabled, and an explicit inline validation error message must appear.
+
+=============================================================
+
+Requirement: User Registration API
+
+Endpoint : POST /api/v1/users/register
+
+Description: The API allows new users to register an account.
+
+
+{
+  "firstName": "John",
+  "lastName": "Doe",
+  "email": "john.doe@email.com",
+  "password": "Password@123",
+  "confirmPassword": "Password@123",
+  "mobileNumber": "9876543210",
+  "dateOfBirth": "1995-06-15"
+}
+
+
+Business Rules
+
+-firstName and lastName are mandatory.
+
+-Names must contain only alphabetic characters and spaces.
+
+-Email is mandatory and must be unique.
+
+-Email must follow a valid email format.
+
+-Password must:
+  *Be 8–20 characters long.
+
+  *Contain at least one uppercase letter.
+
+  *Contain at least one lowercase letter.
+
+  *Contain at least one number.
+
+  *Contain at least one special character.
+
+-confirmPassword must match password.

@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { DocumentParser, UploadedFilePayload } from '../services/document/DocumentParser';
 import {
   JiraIssueSummary,
@@ -43,6 +45,7 @@ type RequirementEnhancement = {
 
 type ScenarioItem = {
   id: string;
+  type?: 'HP' | 'AF' | 'EC' | 'EG' | 'BR';
   title: string;
   requirementRefs: string[];
   preconditions: string[];
@@ -54,6 +57,7 @@ type ScenarioItem = {
 type TestCaseItem = {
   id: string;
   title: string;
+  testType: 'Functional' | 'Negative' | 'Edge' | 'Integration';
   scenarioId: string;
   requirementRefs: string[];
   gherkin: string;
@@ -67,12 +71,19 @@ type TestCaseItem = {
 
 type AutomationCandidateItem = {
   testCaseId: string;
+  scenarioId: string;
+  requirementRef: string;
   candidate: boolean;
   exclusionReason: string;
+  feasibilityLevel: 'High' | 'Medium' | 'Low' | 'Not Feasible' | 'Evidence Required';
   feasibility: number;
+  roiLevel: 'High' | 'Medium' | 'Low' | 'Negative' | 'Evidence Required';
   roiScore: number;
   layer: 'Unit' | 'API' | 'UI';
-  priority: 'Automate First' | 'Automate Second' | 'Manual/Deferred';
+  priority: 'P1' | 'P2' | 'P3' | 'P4';
+  playwrightAutomatable: 'Yes' | 'Partial' | 'No';
+  playwrightScope: 'UI' | 'API' | 'N/A';
+  blocker: string;
   notes: string;
 };
 
@@ -100,6 +111,7 @@ export class TraceLMPanel {
   private readonly batchProcessor: BatchProcessor;
   private readonly jiraPullCache = new Map<string, JiraIssueSummary[]>();
   private readonly llmCache = new Map<string, string>();
+  private generationId = 0;
   private disposables: vscode.Disposable[] = [];
 
   public static createOrShow(extensionContext: vscode.ExtensionContext): void {
@@ -297,16 +309,28 @@ export class TraceLMPanel {
 
         if (message.command === 'requirements:enhance') {
           try {
+            // Clear stale LLM cache at the start of every new generation run so
+            // re-running with the same requirements text produces a fresh response.
+            this.llmCache.clear();
             const settings = await this.getSettings();
             const requirements = message.payload?.requirements ?? '';
             const enhancement = await this.generateRequirementEnhancement(requirements, settings);
+            const genId = ++this.generationId;
 
             this.panel.webview.postMessage({
               command: 'requirements:enhanced',
-              payload: {
-                enhancement: JSON.stringify(enhancement)
-              }
+              payload: { enhancement: JSON.stringify(enhancement), genId: String(genId) }
             });
+
+            void (async () => {
+              try {
+                const fixed = await this.validateAndFix('enhancement', enhancement, settings);
+                this.panel.webview.postMessage({
+                  command: 'requirements:enhancementFixed',
+                  payload: { enhancement: JSON.stringify(fixed), genId: String(genId) }
+                });
+              } catch { /* silent — background validation is best-effort */ }
+            })();
           } catch (error) {
             this.panel.webview.postMessage({
               command: 'requirements:error',
@@ -333,13 +357,22 @@ export class TraceLMPanel {
               clarifyingQuestions: []
             });
             const scenarios = await this.generateScenarios(requirements, enhancement, settings);
+            const genId = ++this.generationId;
 
             this.panel.webview.postMessage({
               command: 'scenarios:generated',
-              payload: {
-                scenarios: JSON.stringify(scenarios)
-              }
+              payload: { scenarios: JSON.stringify(scenarios), genId: String(genId) }
             });
+
+            void (async () => {
+              try {
+                const fixed = await this.validateAndFix('scenarios', scenarios, settings);
+                this.panel.webview.postMessage({
+                  command: 'scenarios:fixed',
+                  payload: { scenarios: JSON.stringify(fixed), genId: String(genId) }
+                });
+              } catch { /* silent */ }
+            })();
           } catch (error) {
             this.panel.webview.postMessage({
               command: 'requirements:error',
@@ -357,13 +390,22 @@ export class TraceLMPanel {
             const scenariosRaw = message.payload?.scenarios ?? '[]';
             const scenarios = this.safeJsonParse<ScenarioItem[]>(scenariosRaw, []);
             const testCases = await this.generateTestCases(scenarios, settings);
+            const genId = ++this.generationId;
 
             this.panel.webview.postMessage({
               command: 'testCases:generated',
-              payload: {
-                testCases: JSON.stringify(testCases)
-              }
+              payload: { testCases: JSON.stringify(testCases), genId: String(genId) }
             });
+
+            void (async () => {
+              try {
+                const fixed = await this.validateAndFix('testcases', testCases, settings);
+                this.panel.webview.postMessage({
+                  command: 'testCases:fixed',
+                  payload: { testCases: JSON.stringify(fixed), genId: String(genId) }
+                });
+              } catch { /* silent */ }
+            })();
           } catch (error) {
             this.panel.webview.postMessage({
               command: 'requirements:error',
@@ -401,12 +443,22 @@ export class TraceLMPanel {
               settings
             );
 
+            const genId = ++this.generationId;
+
             this.panel.webview.postMessage({
               command: 'automation:analyzed',
-              payload: {
-                analysis: JSON.stringify(analysis)
-              }
+              payload: { analysis: JSON.stringify(analysis), genId: String(genId) }
             });
+
+            void (async () => {
+              try {
+                const fixed = await this.validateAndFix('automation', analysis, settings);
+                this.panel.webview.postMessage({
+                  command: 'automation:fixed',
+                  payload: { analysis: JSON.stringify(fixed), genId: String(genId) }
+                });
+              } catch { /* silent */ }
+            })();
           } catch (error) {
             this.panel.webview.postMessage({
               command: 'requirements:error',
@@ -793,19 +845,24 @@ export class TraceLMPanel {
     try {
       const llm = new LLMService(provider as LLMProviderName, apiKey);
 
-      const timeoutMs = 15000;
+      // Gemini 2.5 thinking models can take 20-40s even for trivial prompts.
+      // All other providers are fast; Gemini gets a longer window.
+      const isGemini = provider.toLowerCase() === 'gemini';
+      const timeoutMs = isGemini ? 60_000 : 20_000;
       const timeoutError = new Error(
-        `Timed out after ${timeoutMs / 1000}s while contacting ${provider}.`
+        `Timed out after ${timeoutMs / 1000}s while contacting ${provider}. The model may be slow to start — try again or switch to a faster model (e.g. gemini-2.0-flash).`
       );
       const timeoutPromise = new Promise<never>((_, reject) => {
         const timer = setTimeout(() => reject(timeoutError), timeoutMs);
         void timer;
       });
 
+      // "NO_THINKING" hint keeps Gemini 2.5 from running an extended reasoning pass
+      // on a trivial connectivity check, cutting cold-start latency significantly.
       const completionPromise = llm.complete({
         model,
         temperature: 0,
-        prompt: 'Reply with OK only.'
+        prompt: 'Reply with the single word OK. Do not include any other text or reasoning.'
       });
 
       const response = await Promise.race([completionPromise, timeoutPromise]);
@@ -901,8 +958,9 @@ export class TraceLMPanel {
       throw new Error('Provide requirements text before running enhancement.');
     }
 
-    const prompt = `Analyze the requirements below and return strict JSON with keys: missingFunctional, missingNonFunctional, bestPractices, marketBenchmark, risks, clarifyingQuestions.\\n\\nRequirements:\\n${requirements}`;
-    const responseText = await this.completeWithCache(settings, prompt);
+    const systemPrompt = this.loadPrompt('requirement-enhancement.txt');
+    const prompt = `Requirements:\n${requirements}`;
+    const responseText = await this.completeWithCache(settings, prompt, systemPrompt);
     if (responseText) {
       const parsed = this.tryParseEnhancementFromText(responseText);
       if (parsed) {
@@ -947,8 +1005,9 @@ export class TraceLMPanel {
       throw new Error('Provide requirements text before generating scenarios.');
     }
 
-    const prompt = `Generate test scenarios as strict JSON array with fields id,title,requirementRefs,preconditions,flow,expectedOutcome,priority. requirementRefs must map each scenario to one or more requirement identifiers.\\n\\nRequirements:\\n${requirements}\\n\\nEnhancement:\\n${JSON.stringify(enhancement, null, 2)}`;
-    const responseText = await this.completeWithCache(settings, prompt);
+    const systemPrompt = this.loadPrompt('scenario-generation.txt');
+    const prompt = `Requirements:\n${requirements}\n\nEnhancement:\n${JSON.stringify(enhancement, null, 2)}`;
+    const responseText = await this.completeWithCache(settings, prompt, systemPrompt);
     if (responseText) {
       const parsed = this.tryParseScenariosFromText(responseText);
       if (parsed.length > 0) {
@@ -995,12 +1054,9 @@ export class TraceLMPanel {
       throw new Error('Generate or provide scenarios before generating test cases.');
     }
 
-    const prompt = `Generate test cases in strict JSON array with fields id,title,scenarioId,requirementRefs,gherkin,preconditions,steps,expectedResult,layer,priority.\\n\\nScenarios:\\n${JSON.stringify(
-        scenarios,
-        null,
-        2
-      )}`;
-    const responseText = await this.completeWithCache(settings, prompt);
+    const systemPrompt = this.loadPrompt('test-case-generation.txt');
+    const prompt = `Scenarios:\n${JSON.stringify(scenarios, null, 2)}`;
+    const responseText = await this.completeWithCache(settings, prompt, systemPrompt);
     if (responseText) {
       const parsed = this.tryParseTestCasesFromText(responseText);
       if (parsed.length > 0) {
@@ -1018,17 +1074,27 @@ export class TraceLMPanel {
         `  Then ${scenario.expectedOutcome || 'the expected result is achieved'}`
       ].join('\n');
 
+      const scenarioType = scenario.type ?? '';
+      const testType: TestCaseItem['testType'] =
+        scenarioType === 'EC' ? 'Negative' :
+        scenarioType === 'EG' ? 'Edge' :
+        scenarioType === 'BR' ? 'Integration' : 'Functional';
+      const layer: TestCaseItem['layer'] =
+        scenarioType === 'EC' || scenarioType === 'EG' ? 'Unit' :
+        scenarioType === 'BR' ? 'API' : 'UI';
+
       return {
         id,
         title: `${scenario.title} - Test Case`,
+        testType,
         scenarioId: scenario.id,
         requirementRefs: scenario.requirementRefs,
         gherkin,
         preconditions: scenario.preconditions,
         steps: scenario.flow,
         expectedResult: scenario.expectedOutcome,
-        testData: 'Sample data or mock values needed for execution.',
-        layer: index % 3 === 0 ? 'API' : index % 3 === 1 ? 'UI' : 'Unit',
+        testData: scenario.preconditions.join('; ') || 'N/A',
+        layer,
         priority: scenario.priority || 'Medium'
       };
     });
@@ -1045,16 +1111,9 @@ export class TraceLMPanel {
       throw new Error('Generate test cases before running automation analysis.');
     }
 
-    const prompt = `Analyze automation candidates and return strict JSON object with keys summary,recommendedOrder,items.\\nItems fields: testCaseId,candidate,exclusionReason,feasibility,roiScore,layer,priority,notes.\\n\\nRequirements:\\n${requirements}\\n\\nEnhancement:\\n${JSON.stringify(
-        enhancement,
-        null,
-        2
-      )}\\n\\nScenarios:\\n${JSON.stringify(
-        scenarios,
-        null,
-        2
-      )}\\n\\nTestCases:\\n${JSON.stringify(testCases, null, 2)}`;
-    const responseText = await this.completeWithCache(settings, prompt);
+    const systemPrompt = this.loadPrompt('automation-analysis.txt');
+    const prompt = `Requirements:\n${requirements}\n\nEnhancement:\n${JSON.stringify(enhancement, null, 2)}\n\nScenarios:\n${JSON.stringify(scenarios, null, 2)}\n\nTestCases:\n${JSON.stringify(testCases, null, 2)}`;
+    const responseText = await this.completeWithCache(settings, prompt, systemPrompt);
     if (responseText) {
       const parsed = this.tryParseAutomationFromText(responseText);
       if (parsed) {
@@ -1062,32 +1121,44 @@ export class TraceLMPanel {
       }
     }
 
-    const items: AutomationCandidateItem[] = testCases.map((testCase, index) => {
+    const items: AutomationCandidateItem[] = testCases.map((testCase) => {
       const layer = testCase.layer;
-      const feasibility = layer === 'API' ? 5 : layer === 'Unit' ? 4 : 3;
-      const roiScore = layer === 'API' ? 9 : layer === 'Unit' ? 8 : 6;
-      const candidate = roiScore >= 7;
+      const feasibilityLevel: AutomationCandidateItem['feasibilityLevel'] =
+        layer === 'Unit' ? 'High' : layer === 'API' ? 'High' : 'Medium';
+      const roiLevel: AutomationCandidateItem['roiLevel'] =
+        layer === 'Unit' ? 'High' : layer === 'API' ? 'High' : 'Medium';
+      const feasibility = feasibilityLevel === 'High' ? 9 : 6;
+      const roiScore = roiLevel === 'High' ? 9 : 6;
+      const candidate = layer !== 'UI' || testCase.testType === 'Functional';
+      const priority: AutomationCandidateItem['priority'] =
+        layer === 'Unit' ? 'P1' : layer === 'API' ? 'P1' : 'P2';
+      const playwrightAutomatable: AutomationCandidateItem['playwrightAutomatable'] =
+        layer === 'Unit' ? 'No' : 'Yes';
+      const playwrightScope: AutomationCandidateItem['playwrightScope'] =
+        layer === 'Unit' ? 'N/A' : layer === 'API' ? 'API' : 'UI';
 
       return {
         testCaseId: testCase.id,
+        scenarioId: testCase.scenarioId,
+        requirementRef: testCase.requirementRefs[0] ?? 'Evidence Required',
         candidate,
-        exclusionReason: candidate ? '' : 'Low ROI compared to maintenance overhead.',
+        exclusionReason: candidate ? '' : 'Low ROI relative to maintenance overhead for this layer.',
+        feasibilityLevel,
         feasibility,
+        roiLevel,
         roiScore,
         layer,
-        priority:
-          roiScore >= 8 ? 'Automate First' : roiScore >= 6 ? 'Automate Second' : 'Manual/Deferred',
-        notes:
-          index % 2 === 0
-            ? 'Stable path and repeatable data setup.'
-            : 'Requires environment control for deterministic runs.'
+        priority,
+        playwrightAutomatable,
+        playwrightScope,
+        blocker: layer === 'Unit' ? 'Unit-scope logic; use Jest or Vitest instead of Playwright.' : '',
+        notes: 'Evidence Required — manual review needed to confirm feasibility and ROI.'
       };
     });
 
     return {
-      summary:
-        'Automation analysis completed using feasibility and ROI heuristics across Unit/API/UI layers.',
-      recommendedOrder: ['API', 'Unit', 'UI'],
+      summary: 'Automation analysis completed using layer heuristics. Manual review required to validate feasibility and ROI scores.',
+      recommendedOrder: ['Unit', 'API', 'UI'],
       items
     };
   }
@@ -1114,16 +1185,21 @@ export class TraceLMPanel {
       return [];
     }
 
+    const validScenarioTypes = new Set(['HP', 'AF', 'EC', 'EG', 'BR']);
     return array
-      .map((item, index) => ({
-        id: this.asString(item.id) || `SCN-${String(index + 1).padStart(3, '0')}`,
-        title: this.asString(item.title),
-        requirementRefs: this.asStringArray(item.requirementRefs),
-        preconditions: this.asStringArray(item.preconditions),
-        flow: this.asStringArray(item.flow),
-        expectedOutcome: this.asString(item.expectedOutcome),
-        priority: this.asString(item.priority) || 'Medium'
-      }))
+      .map((item, index) => {
+        const rawType = this.asString(item.type).toUpperCase();
+        return {
+          id: this.asString(item.id) || `SCN-${String(index + 1).padStart(3, '0')}`,
+          title: this.asString(item.title),
+          type: (validScenarioTypes.has(rawType) ? rawType as ScenarioItem['type'] : undefined),
+          requirementRefs: this.asStringArray(item.requirementRefs),
+          preconditions: this.asStringArray(item.preconditions),
+          flow: this.asStringArray(item.flow),
+          expectedOutcome: this.asString(item.expectedOutcome),
+          priority: this.asString(item.priority) || 'Medium'
+        };
+      })
       .filter((item) => item.title.length > 0)
       .map((item) => ({
         ...item,
@@ -1142,9 +1218,15 @@ export class TraceLMPanel {
         const layerValue = this.asString(item.layer).toUpperCase();
         const layer: 'Unit' | 'API' | 'UI' =
           layerValue === 'UNIT' ? 'Unit' : layerValue === 'UI' ? 'UI' : 'API';
+        const testTypeValue = this.asString(item.testType);
+        const testType: TestCaseItem['testType'] =
+          testTypeValue === 'Negative' ? 'Negative' :
+          testTypeValue === 'Edge' ? 'Edge' :
+          testTypeValue === 'Integration' ? 'Integration' : 'Functional';
         return {
           id: this.asString(item.id) || `TC-${String(index + 1).padStart(3, '0')}`,
           title: this.asString(item.title),
+          testType,
           scenarioId: this.asString(item.scenarioId) || `SCN-${String(index + 1).padStart(3, '0')}`,
           requirementRefs: this.asStringArray(item.requirementRefs),
           gherkin: this.asString(item.gherkin),
@@ -1160,7 +1242,7 @@ export class TraceLMPanel {
       .map((item) => ({
         ...item,
         requirementRefs: item.requirementRefs.length > 0 ? item.requirementRefs : [item.scenarioId],
-        testData: item.testData || 'Sample data or mock values needed for execution.'
+        testData: item.testData || 'N/A'
       }));
   }
 
@@ -1174,29 +1256,56 @@ export class TraceLMPanel {
     const items: AutomationCandidateItem[] = rawItems
       .map((item) => {
         const record = item as Record<string, unknown>;
+
         const layerValue = this.asString(record.layer).toUpperCase();
         const layer: 'Unit' | 'API' | 'UI' =
           layerValue === 'UNIT' ? 'Unit' : layerValue === 'UI' ? 'UI' : 'API';
 
         const priorityValue = this.asString(record.priority);
-        const priority: 'Automate First' | 'Automate Second' | 'Manual/Deferred' =
-          priorityValue === 'Automate First' ||
-          priorityValue === 'Automate Second' ||
-          priorityValue === 'Manual/Deferred'
-            ? priorityValue
-            : 'Automate Second';
+        const priority: AutomationCandidateItem['priority'] =
+          priorityValue === 'P1' || priorityValue === 'P2' ||
+          priorityValue === 'P3' || priorityValue === 'P4'
+            ? priorityValue : 'P3';
+
+        const feasibilityLevelValue = this.asString(record.feasibilityLevel);
+        const feasibilityLevel: AutomationCandidateItem['feasibilityLevel'] =
+          feasibilityLevelValue === 'High' || feasibilityLevelValue === 'Medium' ||
+          feasibilityLevelValue === 'Low' || feasibilityLevelValue === 'Not Feasible'
+            ? feasibilityLevelValue : 'Evidence Required';
+
+        const roiLevelValue = this.asString(record.roiLevel);
+        const roiLevel: AutomationCandidateItem['roiLevel'] =
+          roiLevelValue === 'High' || roiLevelValue === 'Medium' ||
+          roiLevelValue === 'Low' || roiLevelValue === 'Negative'
+            ? roiLevelValue : 'Evidence Required';
+
+        const playwrightValue = this.asString(record.playwrightAutomatable);
+        const playwrightAutomatable: AutomationCandidateItem['playwrightAutomatable'] =
+          playwrightValue === 'Yes' || playwrightValue === 'Partial' || playwrightValue === 'No'
+            ? playwrightValue : 'No';
+
+        const scopeValue = this.asString(record.playwrightScope).toUpperCase();
+        const playwrightScope: AutomationCandidateItem['playwrightScope'] =
+          scopeValue === 'UI' ? 'UI' : scopeValue === 'API' ? 'API' : 'N/A';
 
         const feasibilityNumber = Number(record.feasibility);
         const roiNumber = Number(record.roiScore);
 
         return {
           testCaseId: this.asString(record.testCaseId),
+          scenarioId: this.asString(record.scenarioId),
+          requirementRef: this.asString(record.requirementRef) || 'Evidence Required',
           candidate: Boolean(record.candidate),
           exclusionReason: this.asString(record.exclusionReason),
-          feasibility: Number.isFinite(feasibilityNumber) ? feasibilityNumber : 1,
-          roiScore: Number.isFinite(roiNumber) ? roiNumber : 1,
+          feasibilityLevel,
+          feasibility: Number.isFinite(feasibilityNumber) ? feasibilityNumber : 0,
+          roiLevel,
+          roiScore: Number.isFinite(roiNumber) ? roiNumber : 0,
           layer,
           priority,
+          playwrightAutomatable,
+          playwrightScope,
+          blocker: this.asString(record.blocker),
           notes: this.asString(record.notes)
         };
       })
@@ -1217,7 +1326,44 @@ export class TraceLMPanel {
     return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
   }
 
-  private async completeWithCache(settings: SettingsPayload, prompt: string): Promise<string | null> {
+  private async validateAndFix<T>(
+    type: 'scenarios' | 'testcases' | 'automation' | 'enhancement',
+    output: T,
+    settings: SettingsPayload
+  ): Promise<T> {
+    // Hard cap: validator must finish within 150s or we return the original output.
+    const VALIDATOR_TIMEOUT_MS = 150_000;
+    try {
+      const validationPromise = (async (): Promise<T> => {
+        const systemPrompt = this.loadPrompt('output-validator.txt');
+        const prompt = JSON.stringify({ type, output });
+        const responseText = await this.completeWithCache(settings, prompt, systemPrompt);
+        if (!responseText) {
+          return output;
+        }
+        const cleaned = responseText
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/\s*```$/, '')
+          .trim();
+        return JSON.parse(cleaned) as T;
+      })();
+
+      const timeoutPromise = new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error('validator-timeout')), VALIDATOR_TIMEOUT_MS)
+      );
+
+      return await Promise.race([validationPromise, timeoutPromise]);
+    } catch {
+      return output;
+    }
+  }
+
+  private loadPrompt(filename: string): string {
+    const promptPath = path.join(__dirname, 'prompts', filename);
+    return fs.readFileSync(promptPath, 'utf-8');
+  }
+
+  private async completeWithCache(settings: SettingsPayload, prompt: string, systemPrompt?: string): Promise<string | null> {
     if (!settings.llmApiKey.trim() || !settings.llmModel.trim()) {
       return null;
     }
@@ -1225,7 +1371,8 @@ export class TraceLMPanel {
     const cacheKey = this.buildCacheKey('llm', {
       provider: settings.llmProvider,
       model: settings.llmModel,
-      prompt
+      prompt,
+      systemPrompt
     });
 
     const cached = this.llmCache.get(cacheKey);
@@ -1237,7 +1384,8 @@ export class TraceLMPanel {
     const response = await llm.complete({
       model: settings.llmModel,
       prompt,
-      temperature: 0.2
+      systemPrompt,
+      temperature: 0
     });
 
     this.llmCache.set(cacheKey, response.text);

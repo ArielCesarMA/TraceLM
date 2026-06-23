@@ -17,7 +17,7 @@ import {
   emptyEnhancement,
   getProviderModels,
 } from './types';
-import { downloadFile, escapeCsvCell } from './utils';
+import { downloadFile, escapeCsvCell, inferScenarioType } from './utils';
 import { useTraceLMMessages } from './hooks/useTraceLMMessages';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { SettingsTab } from './tabs/SettingsTab';
@@ -47,6 +47,8 @@ function App(): JSX.Element {
   const [pulledIssues, setPulledIssues] = useState<JiraIssueSummary[]>([]);
 
   const [enhancement, setEnhancement] = useState<RequirementEnhancement>(emptyEnhancement);
+  const [enhancementGeneratedAt, setEnhancementGeneratedAt] = useState<Date | null>(null);
+  const [scenariosGeneratedAt, setScenariosGeneratedAt] = useState<Date | null>(null);
   const [scenarios, setScenarios] = useState<ScenarioItem[]>([]);
   const [testCases, setTestCases] = useState<TestCaseItem[]>([]);
   const [automation, setAutomation] = useState<AutomationAnalysis | null>(null);
@@ -68,6 +70,8 @@ function App(): JSX.Element {
   const requirementsReviewedRef = useRef(requirementsReviewed);
   const uploadDraftsRef = useRef(uploadDrafts);
   const generateAllStepRef = useRef<number>(0);
+  const generateAllWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastGenIdRef = useRef<Record<string, string>>({});
 
   useEffect(() => { requirementTextRef.current = requirementText; }, [requirementText]);
   useEffect(() => { enhancementRef.current = enhancement; }, [enhancement]);
@@ -89,13 +93,21 @@ function App(): JSX.Element {
   }, [availableModels, settings.llmModel]);
 
   useTraceLMMessages({
-    generateAllStepRef, requirementTextRef, enhancementRef, scenariosRef,
+    generateAllStepRef, requirementTextRef, enhancementRef, scenariosRef, lastGenIdRef,
     setStatus, setFeedback, setIsBusy, setSettings,
     setRequirementText, setRequirementsReviewed,
     setParsedFiles, setStoryOptions, setPulledIssues,
     setEnhancement, setScenarios, setTestCases,
     setXrayPushedIssues, setAutomation,
     setXrayPushPreview, setXrayPushProgress, setGenerationProgress,
+    onEnhancementReceived: () => setEnhancementGeneratedAt(new Date()),
+    onScenariosReceived: () => setScenariosGeneratedAt(new Date()),
+    onChainSettled: () => {
+      if (generateAllWatchdogRef.current) {
+        clearTimeout(generateAllWatchdogRef.current);
+        generateAllWatchdogRef.current = null;
+      }
+    },
   });
 
   // ── Settings ──────────────────────────────────────────────────────────────
@@ -221,6 +233,17 @@ function App(): JSX.Element {
   const generateAll = useCallback((): void => {
     if (!requirementTextRef.current.trim()) { setFeedback('Add requirements text before generation.'); return; }
     if (!ensureReviewed()) return;
+
+    if (generateAllWatchdogRef.current) { clearTimeout(generateAllWatchdogRef.current); }
+    generateAllWatchdogRef.current = setTimeout(() => {
+      if (generateAllStepRef.current > 0) {
+        generateAllStepRef.current = 0;
+        setGenerationProgress('');
+        setIsBusy(false);
+        setFeedback('Generate All timed out after 25 minutes. Please try again or use individual generation buttons.');
+      }
+    }, 1_500_000);
+
     setIsBusy(true);
     generateAllStepRef.current = 1;
     setGenerationProgress('Requirement Enhancement (1/4)...');
@@ -324,6 +347,13 @@ function App(): JSX.Element {
       } else {
         item[key] = value as never;
       }
+      // Re-infer type whenever content fields change, unless the user explicitly changed type
+      if (key !== 'type' && key !== 'id' && key !== 'requirementRefs' && key !== 'preconditions') {
+        const flow = key === 'flow' ? value.split('\n').map((l) => l.trim()).filter(Boolean) : item.flow;
+        const outcome = key === 'expectedOutcome' ? value : item.expectedOutcome;
+        const title = key === 'title' ? value : item.title;
+        item.type = inferScenarioType(title, flow, outcome);
+      }
       copy[index] = item;
       return copy;
     });
@@ -335,6 +365,7 @@ function App(): JSX.Element {
       const newItem: ScenarioItem = {
         id: `SCN-${String(nextNum).padStart(3, '0')}`,
         title: '',
+        type: inferScenarioType(''),
         requirementRefs: [],
         preconditions: [],
         flow: [],
@@ -363,13 +394,33 @@ function App(): JSX.Element {
   const exportAutomationCsv = useCallback((): void => {
     const current = automationRef.current;
     if (!current) return;
-    const header = ['TestCaseID', 'Candidate', 'ExclusionReason', 'Feasibility', 'ROI', 'Layer', 'Priority', 'Notes'];
+    const header = ['TestCaseID', 'ScenarioID', 'RequirementRef', 'Candidate', 'ExclusionReason', 'FeasibilityLevel', 'ROILevel', 'Layer', 'Priority', 'PlaywrightAutomatable', 'PlaywrightScope', 'Blocker', 'Notes'];
     const lines = current.items.map((item) => [
-      item.testCaseId, String(item.candidate), item.exclusionReason,
-      String(item.feasibility), String(item.roiScore), item.layer, item.priority, item.notes,
+      item.testCaseId, item.scenarioId, item.requirementRef,
+      String(item.candidate), item.exclusionReason,
+      item.feasibilityLevel, item.roiLevel,
+      item.layer, item.priority,
+      item.playwrightAutomatable, item.playwrightScope, item.blocker, item.notes,
     ]);
     const csv = [header, ...lines].map((row) => row.map(escapeCsvCell).join(',')).join('\n');
     downloadFile('tracelm-automation-analysis.csv', csv, 'text/csv;charset=utf-8');
+  }, []);
+
+  // ── Enhancement item mutations ────────────────────────────────────────────
+
+  const updateEnhancementItem = useCallback((key: keyof RequirementEnhancement, index: number, value: string): void => {
+    setEnhancement((prev) => {
+      const arr = [...prev[key]];
+      arr[index] = value;
+      return { ...prev, [key]: arr };
+    });
+  }, []);
+
+  const deleteEnhancementItem = useCallback((key: keyof RequirementEnhancement, index: number): void => {
+    setEnhancement((prev) => ({
+      ...prev,
+      [key]: prev[key].filter((_, i) => i !== index),
+    }));
   }, []);
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -463,7 +514,10 @@ function App(): JSX.Element {
             enhancement={enhancement}
             isBusy={isBusy}
             feedback={feedback}
+            generatedAt={enhancementGeneratedAt}
             onGenerate={generateEnhancement}
+            onUpdateItem={updateEnhancementItem}
+            onDeleteItem={deleteEnhancementItem}
           />
         </ErrorBoundary>
       )}
@@ -474,6 +528,7 @@ function App(): JSX.Element {
             scenarios={scenarios}
             isBusy={isBusy}
             feedback={feedback}
+            generatedAt={scenariosGeneratedAt}
             onGenerate={generateScenarios}
             onUpdateField={updateScenarioField}
             onAddScenario={addScenario}

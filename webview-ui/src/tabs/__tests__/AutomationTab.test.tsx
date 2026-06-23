@@ -10,22 +10,36 @@ const sampleAnalysis: AutomationAnalysis = {
   items: [
     {
       testCaseId: 'TC-001',
+      scenarioId: 'SCN-001',
+      requirementRef: 'REQ-001',
       candidate: true,
       exclusionReason: '',
-      feasibility: 8.5,
-      roiScore: 9.0,
+      feasibilityLevel: 'High',
+      feasibility: 9,
+      roiLevel: 'High',
+      roiScore: 9,
       layer: 'Unit',
-      priority: 'Automate First',
+      priority: 'P1',
+      playwrightAutomatable: 'No',
+      playwrightScope: 'N/A',
+      blocker: 'Unit-scope logic; use Jest instead of Playwright.',
       notes: 'Fast to implement, high coverage gain.',
     },
     {
       testCaseId: 'TC-002',
+      scenarioId: 'SCN-002',
+      requirementRef: 'REQ-001',
       candidate: false,
       exclusionReason: 'Requires visual verification',
-      feasibility: 3.0,
-      roiScore: 2.5,
+      feasibilityLevel: 'Low',
+      feasibility: 3,
+      roiLevel: 'Low',
+      roiScore: 3,
       layer: 'UI',
-      priority: 'Manual/Deferred',
+      priority: 'P4',
+      playwrightAutomatable: 'Partial',
+      playwrightScope: 'UI',
+      blocker: 'Visual assertions require additional tooling.',
       notes: '',
     },
   ],
@@ -77,8 +91,8 @@ describe('AutomationTab', () => {
 
   it('renders candidate cards with priority badges', () => {
     render(<AutomationTab {...baseProps} automation={sampleAnalysis} />);
-    expect(screen.getByText('Automate First')).toBeTruthy();
-    expect(screen.getByText('Manual / Deferred')).toBeTruthy();
+    expect(screen.getByText('P1 — Automate Now')).toBeTruthy();
+    expect(screen.getByText('P4 — Manual Only')).toBeTruthy();
   });
 
   it('shows exclusion reason on non-candidate cards', () => {
